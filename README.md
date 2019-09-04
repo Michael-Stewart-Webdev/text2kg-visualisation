@@ -47,6 +47,6 @@ You can also run `./run_server_gunicorn.sh` if you wish to run the server via ws
 
 ## License
 
-text2kg-uwa (c) by Michael Stewart, Majigsuren Enkhsaikhan and Wei Liu
+text2kg-visualisation (c) by Michael Stewart, Majigsuren Enkhsaikhan and Wei Liu
 
-text2kg-uwa is licensed under a Creative Commons Attribution-ShareAlike 4.0 International License.
+text2kg-visualisation is licensed under a Creative Commons Attribution-ShareAlike 4.0 International License.
