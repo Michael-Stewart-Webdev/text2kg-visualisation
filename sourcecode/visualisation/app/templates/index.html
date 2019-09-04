@@ -1,0 +1,999 @@
+<html>
+	<head>
+		<title>{{ title }} - Graph Visualisation</title>
+		<link href="https://fonts.googleapis.com/css?family=Nunito&display=swap" rel="stylesheet">
+		<link rel="stylesheet" href="{{ url_for('static', filename='fontawesome/css/all.css') }}">
+		<link rel="stylesheet" type="text/css" href="{{ url_for('static', filename='stylesheets/stylesheet.css') }}"/>		
+	</head>
+	<body>
+		<div class="container">
+			<nav id="user-input">
+
+				
+					<form id="document-form">
+						
+						<div class="inner">
+							<button type="submit" id="submit-document-button"><i class="fa fa-angle-right"></i>&nbsp;&nbsp;Create graph</button>
+							<textarea id="documents-form-textarea" autofocus placeholder="Insert document(s) here (one document per line)."></textarea>
+							<div id="textarea-info"></div>
+						</div>
+						
+
+					</form>
+					<div id="uwa-logo">
+						<img src="{{ url_for('static', filename='images/uwa-logo-trans.png') }}"/>
+					</div>
+				
+			</nav>
+			
+			<main>	
+
+				<div id="graph-controls" class="disabled">	
+					<div class="inner">	
+						<form id="graph-controls-form">
+					
+							<label for="input-node-weights">Node weights:</label>		
+							<select id="input-node-weights">
+								<option>Degree</option>
+								<option>Betweenness</option>
+								<option>Uniform</option>
+							</select>
+
+							<label for="input-node-colours">Node colours:</label>
+							<select id="input-node-colours">
+								<option>Document index</option>
+								<option>Entity type</option>
+								<option>Uniform</option>
+							</select>
+											
+							<label for="input-relation-type">Relation type:</label>
+							<select id="input-relation-type">
+								<option>Verbs</option>
+								<option>SemEval</option>
+							</select>
+
+
+
+							<div id="graph-slider-outer-container">
+								<p>Showing <span id="numDocs">0</span> of <span id="totalDocs">0</span> documents<br></p>
+								<div id="graph-slider-container">
+									<input id="graph-slider" name="graph-slider" type="range" min="1" max="10" value="1"></input>
+								</div>
+							</div>
+							
+						</form>
+
+					
+						
+					</div>			
+				</div>
+
+				<div class="overlay" id="overlay-controls-and-legend">
+					<div class="expandable-menu" id="overlay-controls">
+						<input type="checkbox" id="open-controls"/>
+						<label for="open-controls"><i class="fa fa-sm fa-mouse-pointer"></i>&nbsp;Controls</label>
+						
+
+						<div class="content">
+							<ul>
+								<li><b>Click</b> to select node</li>
+								<li><b>Drag</b> to move node or graph</li>								
+								<li><b>Scroll</b> to zoom</li>
+							</ul>
+						</div>
+
+					</div>
+					<div class="expandable-menu" id="overlay-legend">
+						<input type="checkbox" id="open-legend"/>
+						<label for="open-legend"><i class="fa fa-sm fa-info-circle"></i>&nbsp;Legend</label>
+						
+						<div class="content">
+							<ul id="legend-list">
+							</ul>
+						</div>
+					</div>
+				</div>
+				<div class="overlay" id="overlay-docs-too-long"><i class="fa fa-exclamation-triangle"></i>&nbsp;&nbsp;Please enter up to 10 documents at a time, and up to 5,000 words total.<p class="note">Note: This restriction is in place to ensure the graph generates in a reasonable amount of time.<br/>The restriction could be lifted in a production setting.</div>
+				<div class="overlay" id="overlay-no-triples"><i class="fa fa-exclamation-triangle"></i>&nbsp;&nbsp;No triples were found in the document(s) entered.<br>Please try again with new documents.</div>			
+				<div class="overlay" id="overlay-loading"><i class="fa fa-spin fa-cog"></i>&nbsp;&nbsp;Building graph...</div>			
+				<div class="overlay" id="overlay-init">Enter document(s) in the text box to generate a graph.</div>
+				<div id="graph-canvas-container">
+					<div id="graph-canvas"></div>
+
+				</div>
+				
+			</main>
+		</div>
+   	</body>
+
+
+	<script src="{{ url_for('static', filename='d3/d3.v3.min.js') }}"></script>
+	<script src="{{ url_for('static', filename='jquery/jquery-3.4.1.min.js') }}"></script>
+	<script type="text/javascript" src="{{ url_for('static', filename='javascript/initial_triples.js') }}"></script>
+	<script type="text/javascript" src="{{ url_for('static', filename='javascript/initial_documents.js') }}"></script>
+   	<script>
+
+   		
+   		
+   		var svg = d3.select("#graph-canvas").append("svg:svg")
+			.attr("width", '100%')
+			.attr("height", '100%')	
+                        .attr('id', 'svg')		
+		
+		var CURRENT_NUM_DOCS   = 0
+		var CURRENT_REL_IDX    = 0
+		var CURRENT_WEIGHT_IDX = 0
+		var CURRENT_NODE_COLOURS = 0
+		var CURRENT_ENTITIES_IN_DOCS = new Set()
+
+		var ENTITY_INDEXES = {"O": 0, "PER": 1, "ORG": 2, "LOC": 3, "MISC": 4}
+		var ENTITY_NAMES = {"PER": "Person", "ORG": "Organization", "LOC": "Location", "MISC": "Miscellaneous", "O": "Non-entity"}
+
+		
+
+		var LEGEND = [] // Stores the legend in the form of ["item name", colour_index]
+		
+		var scaleValue = 1
+		var TEXT_SCALE = 0.7; // The lower the value, the less the text reacts to the d3 zoom.
+
+		// x1 = d.source.x + d.source.nodeSize 
+
+		var container;
+		var graphReady = false;
+
+		function getNodeSize(d) {
+			return 20 * Math.log(1 + d.weights[CURRENT_WEIGHT_IDX])
+		}
+
+		function x1(d) {
+			return d.source.x + (((d.target.x - d.source.x) * (getNodeSize(d.source) + 2)) /
+														(Math.sqrt(((d.target.x - d.source.x) ** 2) + ((d.target.y - d.source.y) ** 2))))
+		}
+		function y1(d) {
+			return  d.source.y + (((d.target.y - d.source.y) * (getNodeSize(d.source) + 2)) /
+														(Math.sqrt(((d.target.x - d.source.x) ** 2) + ((d.target.y - d.source.y) ** 2))))
+		}
+		function x2(d) {
+			return  d.target.x - (((d.target.x - d.source.x) * (getNodeSize(d.target) + 2)) /
+														(Math.sqrt(((d.target.x - d.source.x) ** 2) + ((d.target.y - d.source.y) ** 2))))
+		}
+		function y2(d) {
+			return    d.target.y - (((d.target.y - d.source.y) * (getNodeSize(d.target) + 2))  /
+														(Math.sqrt(((d.target.x - d.source.x) ** 2) + ((d.target.y - d.source.y) ** 2))))
+		}
+
+		function arcMidpoint(d, i) {
+
+			var arc = d3.select("#path-" + i).node()
+			if(arc === null) {
+				throw new Error();
+			}
+			var pathLen = arc.getTotalLength();
+			var pathDistance = pathLen * 0.5;
+			var midpoint = arc.getPointAtLength(pathDistance)
+			return midpoint
+		}
+
+		function tick() {	
+			if(!graphReady) return;		
+			nodes
+				.attr("cx", function(d){ return d.x; })
+				.attr("cy", function(d){ return d.y; })	
+			nodes.each(collide(.25))
+			edges
+				.attr("x1", 	function(d)	{ return x1(d) })
+				.attr("y1", 	function(d) { return y1(d) })
+				.attr("x2", 	function(d) { return x2(d) })
+				.attr("y2", 	function(d) { return y2(d) })
+			nodeLabels
+				.attr("x", function(d) { return d.x; })
+				.attr("y", function(d) { return d.y + 4/(scaleValue ** TEXT_SCALE); })
+
+			multiDocNodes
+				.attr("transform", function(d) { return "translate(" + d.x + "," + d.y + ")"} )
+
+
+			// Calculate arc midpoints of edges
+			var midpoints = {};
+			edges.each(function(d, i) {
+
+				try {
+					midpoints[i] = arcMidpoint(d, i)
+				} catch(err) { // svg midpoint seems to only work correctly on Chrome
+					midpoints[i] = [(x1(d) + x2(d)) / 2, (y1(d) + y2(d)) / 2]
+				}
+
+			})
+
+			edgeLabelBackgrounds
+				.attr("x", function(d, i) { return midpoints[i].x - (d.relations[CURRENT_REL_IDX].length * 3/ (scaleValue ** TEXT_SCALE)); })
+				.attr("y", function(d, i) { return midpoints[i].y - (6/(scaleValue ** TEXT_SCALE)); })	
+				//.attr("transform", "translate(100, 100) rotate(45 60 60)")	
+			edgeLabels
+				.attr("x", function(d, i) { return midpoints[i].x; })
+				.attr("y", function(d, i) { return midpoints[i].y + 4/(scaleValue ** TEXT_SCALE) ; })		
+
+			edges.attr("d", function(d) {			
+				 var curve = 15;
+				 var h = 5;
+				 var dx = (x1(d) + x2(d)) / 2,
+				     dy = (y1(d) + y2(d)) / 2
+				 var dr = d.multiEdge ? (Math.sqrt(dx*dx+dy*dy)) *(1+h)/(curve*h) : 0;  
+				 return "M" + x1(d) + "," + y1(d) + "A" + dr + "," + dr + " 0 0,1 " + x2(d) + "," + y2(d);
+				});
+		 	
+		}
+
+		
+		var width = $("#graph-canvas").width();
+		var height = $("#graph-canvas").height();
+		var k = 0;
+
+
+		var force = d3.layout.force()
+			.size([width, height])
+			.charge(function(d) { nodeSize = 	getNodeSize(d);
+    							return nodeSize ** 1.15 * -80 } ) //console.log(k); return -10 / k } )
+    		.gravity(0.5)//function() { return 1 * k })
+    		.linkDistance(function(d) { dist = 	getNodeSize(d.source) +
+    											getNodeSize(d.target) +
+    											40;
+    									return(dist)})
+			.friction(0.6)
+			.theta(0.3)
+			.on('tick', tick)
+			
+		
+		function dragstarted(d) {
+
+		  svg.classed("dragging", true);
+		
+		  nodes.classed('drag-selected', function(o) {
+		  	return isConnected(d, o);
+		  })
+
+		  multiDocNodes.classed('drag-selected', function(o) {
+		  	return isConnected(d, o);
+		  })
+
+		  nodeLabels.classed('drag-selected', function(o) {
+		  	return isConnected(d, o);
+		  })
+
+		  edges.classed("drag-selected", function(o) {
+			return o.source.index == d.index || o.target.index == d.index;
+		  });
+		  edgeLabels.classed("drag-selected", function(o) {
+			return o.source.index == d.index || o.target.index == d.index;
+		  });
+		  edgeLabelBackgrounds.classed("drag-selected", function(o) {
+			return o.source.index == d.index || o.target.index == d.index;
+		  });
+
+		  d3.event.sourceEvent.stopPropagation();
+
+		  d3.select(this).classed("dragging", true);
+		  //d3.select(this).classed("fixed", d.fixed = true);
+
+		}
+
+		function dragged(d) {
+		  d3.select(this).attr("cx", d.x = d3.event.x).attr("cy", d.y = d3.event.y);
+		}
+
+		function dragended(d) {
+		  svg.classed("dragging", false);
+		  d3.select(this).classed("dragging", false);
+		  tick()
+		}
+
+		var drag = force.drag()
+	    	.origin(function(d) { return d; })
+		    .on("dragstart", dragstarted)
+		    .on("drag", dragged)
+		    .on("dragend", dragended);
+
+
+		function zoomed() {
+		  scaleValue = d3.event.scale;	
+		  container.attr("transform", "translate(" + d3.event.translate + ")scale(" + d3.event.scale + ")");
+			// svg.attr("transform", "translate(" + (d3.event.translate[0] - width/2 + (width) * (d3.event.scale/2)) + ", "  +  (d3.event.translate[1] + -height + (width) *(d3.event.scale /2)) + ") scale(" + (d3.event.scale * 1)+ ")");
+			svg.classed('grabbing', true)
+			nodeLabels.style("font-size", 12 / d3.event.scale**TEXT_SCALE)
+			edgeLabels.style("font-size", 9 / d3.event.scale**TEXT_SCALE)
+			edgeLabelBackgrounds
+				.attr('width', function(d) { return (d.relations[CURRENT_REL_IDX].length * 6)/d3.event.scale**TEXT_SCALE + 'px'})
+				.attr('height', function(d) { return 14/d3.event.scale**TEXT_SCALE + 'px'})
+
+			//tick()				
+	    }
+
+		// var zoom = d3.behavior.zoom()
+		//     .scaleExtent([0.2, 10])
+		//     .on("zoom", zoomed);
+
+
+		svg
+			.call(d3.behavior.zoom()
+			.on("zoom", zoomed)
+			.on("zoomend", function() {
+				tick()
+				svg.classed('grabbing', false)
+			}))
+			.append("g")
+
+
+		// Collide code was found here:
+		//https://bl.ocks.org/newsummit/880d663dba66affaf18226113d34073d
+		/* Cluster functions */
+
+		var padding = width/3, // separation between same-color nodes
+		clusterPadding = width, // separation between different-color nodes
+		maxRadius = width;
+
+		// Resolves collisions between d and all other circles.
+		function collide(alpha) {
+			var quadtree = d3.geom.quadtree(nodes);
+			return function(d) {
+				var r = d.r + maxRadius + Math.max(padding, clusterPadding),
+				nx1 = d.x - r,
+				nx2 = d.x + r,
+				ny1 = d.y - r,
+				ny2 = d.y + r;
+				quadtree.visit(function(quad, x1, y1, x2, y2) {
+				if (quad.point && (quad.point !== d)) {
+					var x = d.x - quad.point.x,
+		   			y = d.y - quad.point.y,
+		    		l = Math.sqrt(x * x + y * y),
+		   			r = d.r + quad.point.radius + (d.sp_id === quad.point.cluster ? padding : clusterPadding);
+					if (l < r) {
+						l = (l - r) / l * alpha;
+						d.x -= x *= l;
+						d.y -= y *= l;
+						quad.point.x += x;
+						quad.point.y += y;
+					}
+				}
+				return x1 > nx2 || x2 < nx1 || y1 > ny2 || y2 < ny1;
+			});
+		};
+		}
+
+		// http://bl.ocks.org/eyaler/10586116
+		// Determine whether a node is connected to another node via a link. Used for the focus on select behaviour.
+		var linkedByIndex = {};		
+		function isConnected(a, b) {
+			return linkedByIndex[a.id + "," + b.id] || linkedByIndex[b.id + "," + a.id] || a.id == b.id;
+		}
+		function hasConnections(a) {
+			for (var property in linkedByIndex) {
+				s = property.split(",");
+				if ((s[0] == a.id || s[1] == a.id) && linkedByIndex[property])
+					return true;
+			}
+			return false;
+		}
+
+
+   		// A small amount of visualisation code was found here:
+   		// https://github.com/Rathachai/d3rdf/blob/master/index.html
+		function triplesToGraph(triples){	
+
+			function filterNodesById(nodes,id){
+				return nodes.filter(function(n) { return n.id === id; });
+			}
+
+			clearGraph();
+			CURRENT_ENTITIES_IN_DOCS = new Set()
+			var graph = { nodes: [], edges: [] };
+
+			var nodeDocAppearances = {}
+			var nodeIds = {}
+
+			var edgeDocAppearances = {}
+			var edgeIds = {}
+			
+			triples.forEach(function(triple) {			
+				var docIdx = triple[0]
+				var head   = triple[1]
+				var rels   = [triple[2], triple[3], triple[4]]
+				var tail   = triple[5]
+
+				var head_weights = [triple[6], triple[8] + 0.25, 1]  // +1 to betweenness (to avoid tiny nodes), 1 for uniform
+				var tail_weights = [triple[7], triple[9] + 0.25, 1]
+
+				var headNode  = filterNodesById(graph.nodes, head)[0];
+				var tailNode  = filterNodesById(graph.nodes, tail)[0];
+
+				var entity_head = triple[10]
+				var entity_tail = triple[11]
+
+				CURRENT_ENTITIES_IN_DOCS.add(entity_head)
+				CURRENT_ENTITIES_IN_DOCS.add(entity_tail)
+
+				//console.log(triple, entity_head, ENTITY_INDEXES[entity_head])
+				
+				if(headNode == null){
+					var colour_indexes = [(docIdx % 10) + 1, ENTITY_INDEXES[entity_head] + 1, 1] // Entity, document index
+					headNode = { docIdx: docIdx, id: head, label: head, weights: head_weights, colour_indexes: colour_indexes, doc_appearances: [new Array(CURRENT_NUM_DOCS).fill(0)] }
+					nodeIds[head] = graph.nodes.length;
+					graph.nodes.push(headNode)
+				}
+				if(!nodeDocAppearances.hasOwnProperty(headNode.id)) {
+					nodeDocAppearances[head] = new Array(CURRENT_NUM_DOCS).fill(0)
+				}
+				nodeDocAppearances[headNode.id][docIdx]++				
+				
+				
+				if(tailNode == null){
+					
+					var colour_indexes = [(docIdx % 10) + 1, ENTITY_INDEXES[entity_tail] + 1, 1]
+					tailNode = { docIdx: docIdx, id:tail, label:tail, weights: tail_weights,  colour_indexes: colour_indexes, doc_appearances: [new Array(CURRENT_NUM_DOCS).fill(0)] }
+					nodeIds[tail] = graph.nodes.length;
+					graph.nodes.push(tailNode);
+				}
+				if(!nodeDocAppearances.hasOwnProperty(tailNode.id)) {
+					nodeDocAppearances[tail] = new Array(CURRENT_NUM_DOCS).fill(0)
+				}
+				nodeDocAppearances[tailNode.id][docIdx]++		
+
+
+
+				// Determine whether edge appears between two nodes more than once
+
+				// var edgeId = head + '-' + rels[0] + '-' + tail
+				// if(!edgeDocAppearances.hasOwnProperty(head)) {
+				// 	edgeDocAppearances[head] = {}
+				// }
+				// if(!edgeDocAppearances[head].hasOwnProperty(tail)) {
+				// 	edgeDocAppearances[head][tail] = [rels[0], new Array(CURRENT_NUM_DOCS).fill(0)]
+				// }
+				// console.log(edgeDocAppearances[head][tail])
+				// edgeDocAppearances[head][tail][1][docIdx]++
+
+				// edgeIds[edgeId] = graph.edges.length;
+
+
+				graph.edges.push({ docIdx: docIdx, source: headNode, target: tailNode, relations: rels, weights: tail_weights, label_number: 1 });
+
+
+			});
+			for(node in nodeDocAppearances) {
+				graph.nodes[nodeIds[node]].doc_appearances = nodeDocAppearances[node]
+				var numDocs = 0
+				var multiDocs = []
+				for(x in nodeDocAppearances[node]) {
+					if(nodeDocAppearances[node][x] > 0) numDocs++
+					multiDocs.push((numDocs > 1))
+				}
+				graph.nodes[nodeIds[node]].multiDocs = multiDocs
+
+			}
+			// for(edge in edgeDocAppearances) {
+
+
+			// 	//graph.edges[edgeIds[edge]].doc_appearances = edgeDocAppearances[edge]
+
+
+			// }
+			// console.log(edgeDocAppearances)
+			
+			return graph;
+		}
+
+		
+		
+		// f f t t t
+		// 1 0 3 0 1 
+		// 1 1 2 2 3
+		// 1 1 2 2
+
+		// Update the graph.
+		// numDocuments: The number of documents to show.
+		// done: A callback function to call when the update has finished.
+		function updateGraph(numDocuments, done){
+			//var graph = this.graph;
+    		
+			var numDocuments = CURRENT_NUM_DOCS;
+			
+
+			edges 					= svg.select(".g-links").selectAll(".link")
+			edgeLabelBackgrounds 	= svg.select(".g-links").selectAll(".link-text-bg")
+			edgeLabels 				= svg.select(".g-links").selectAll(".link-text")
+			nodes 					= svg.select(".g-nodes").selectAll(".node")
+			nodeLabels 				= svg.select(".g-nodes").selectAll(".node-text")
+			multiDocNodes			= svg.select(".g-nodes").selectAll(".multidoc-node")
+
+
+
+    		var graphNodes = graph.nodes.filter(function(n) { return n.docIdx < numDocuments; })
+    		var graphEdges = graph.edges.filter(function(n) { return n.docIdx < numDocuments; })
+
+
+    		var multiEdges = {}
+
+
+    		// Determine which edges appear between the same two nodes more than once, so that they may be arced
+    		for(var i = 0; i < graphEdges.length; i++) {
+				multiEdge = false;
+				d = graphEdges[i]
+				for(var j = 0; j < graphEdges.length; j++) {
+					e = graphEdges[j]
+					if(d === e) continue;
+					if(d.source === e.target && d.target === e.source) {
+						multiEdge = true
+					}
+					if(d.source.id === e.source.id && d.target.id === d.target.id) {
+						var edgeId = d.source.id + '-' + d.target.id
+						if (!multiEdges.hasOwnProperty(edgeId)) {
+							multiEdges[edgeId] = []
+						}
+						multiEdges[edgeId].push(i)
+					}
+				}
+				graphEdges[i].multiEdge = multiEdge
+			}
+
+
+    		// Build a dictionary of links between nodes
+			linkedByIndex = {}
+			graphEdges.forEach(function(d) {
+				linkedByIndex[d.source.id + "," + d.target.id] = true;
+			});
+
+
+			svg.classed("document-colouring", function(d) { return CURRENT_NODE_COLOURS == 0})
+    		
+			svg.select(".g-links").append("svg:defs").selectAll("marker")
+				.data(graphEdges)
+			  .enter().append("svg:marker")
+				.attr("id", function(d, i) { return "marker-" + i; })
+				.attr("viewBox", "0 -5 10 10")
+				.attr("refX", 8)
+				.attr("refY", -0.5)
+				.attr("markerWidth", 6)
+				.attr("markerHeight", 6)
+				.attr("orient", "auto")
+				.attr("class", "marker")
+			  .append("svg:polyline")
+				.attr("points", "0,-5 10,0 0,5")
+				;
+
+
+				
+			// svg.selectAll(".marker")
+			//     .transition()
+			//     .attr("refX", function(d) { return 20 + (40 * Math.log(1 + d.weights[CURRENT_WEIGHT_IDX])); })
+
+
+			edges = edges.data(graphEdges, function(d) { return d.source.id + "-" + d.target.id; })
+			edges.exit().remove()
+
+			edges.enter()
+				.append("path")
+				.attr('id', function(d, i) { return 'path-' + i })
+				.attr("marker-end", function(d, i) { return "url(#marker-" + i + ")" })
+				.attr("class", "link")
+				.attr("stroke-width",1)
+				.classed('multi-edge', function(d) { return d.multiEdge })
+				
+
+
+			edgeLabelBackgrounds = edgeLabelBackgrounds.data(graphEdges, function(d) { return d.source.id + "-" + d.target.id; })
+			edgeLabelBackgrounds.exit().remove()
+
+			edgeLabelBackgrounds
+			    .enter()
+			    .append('rect')
+			    .attr("class", "link-text-bg")			    
+			    .attr('height', '14px')
+
+			edgeLabels = edgeLabels.data(graphEdges, function(d) { return d.source.id + "-" + d.target.id; })
+			edgeLabels.exit().remove()
+
+			edgeLabels
+				.enter()
+				.append("text")
+				.attr("class", "link-text")
+				.attr("text-anchor", "middle")
+
+
+
+			// Update the edgeLabelBackgrounds widths and edgeLabels to reflect any change in relation type (verb, semeval, nyt etc).
+			edgeLabelBackgrounds
+				.attr('width', function(d) { return (d.relations[CURRENT_REL_IDX].length * 6) + 'px'})
+			edgeLabels
+				.text( function (d) { return d.relations[CURRENT_REL_IDX]; })
+				.style("font-size", 9 / scaleValue**TEXT_SCALE)
+				
+
+			function appearsInMultipleDocs(d) {
+				for(x in d.multiDocs) {
+					if(d.multiDocs[x]) return true
+				}
+				return false
+			}
+
+			//multiDocNodes = multiDocNodes.data(graphNodes, function(d) { return d.id; })//.filter(function(d) { return d.multiDocs[CURRENT_NUM_DOCS - 1]}) )
+			multiDocNodes = multiDocNodes.data(graphNodes.filter(function(d) { return appearsInMultipleDocs(d) } ))//, function(d) { return d.id + "-" + CURRENT_NUM_DOCS }) )
+			multiDocNodes.exit().remove()
+//d.multiDocs[CURRENT_NUM_DOCS - 1]
+			multiDocNodes.enter()
+			.append('g')
+			.attr('class', 'multidoc-node')
+
+			//multiDocNodes
+			//.classed('hidden', function(d) { return !d.multiDocs[CURRENT_NUM_DOCS - 1]})			
+
+			multiDocNodes
+			.each(function(node, i) {
+
+				var arc = d3.svg.arc()				  
+				  .innerRadius(0)
+				  .outerRadius(getNodeSize(node));			
+
+				var totalAppearances = 0
+				for(x in node.doc_appearances) {
+					if(x >= CURRENT_NUM_DOCS) continue
+					totalAppearances += node.doc_appearances[x]
+				}
+			
+				// Build the angle data, i.e. where each segment starts and ends
+				var angleData = []
+				var prevAngle = 0 
+				var currentAppearances = 0
+
+				for(var i = 0; i < node.doc_appearances.length; i++) {
+					if(i >= CURRENT_NUM_DOCS) {
+						angleData.push([currentAngle, currentAngle, i])
+						continue
+					}
+					//if(node.doc_appearances[i] == 0) continue
+
+					currentAppearances += node.doc_appearances[i]
+					var currentAngle = (currentAppearances / totalAppearances) * Math.PI * 2
+
+					
+					angleData.push([prevAngle, currentAngle, i])
+					
+					prevAngle = currentAngle
+				}
+				angleData[angleData.length-1][1] = Math.PI * 2
+
+				var pie_segments = d3.select(this)
+					.selectAll('path')
+					.data(angleData)
+
+				//pie_segments.exit().remove()
+				pie_segments.enter()
+					.append('path')
+					//.transition()	
+					.attr('class', function(d) { return 'multidoc-node-segment col-' + ((d[2] % 10) + 1) })
+					//.attr('d', function(d) { return arc({startAngle: 0, endAngle: 0.00001}) })
+
+				pie_segments					
+					.attr('d', function(d) { return arc({startAngle: d[0], endAngle: d[1]}) })
+			});
+
+
+
+
+			nodes = nodes.data(graphNodes, function(d) { return d.id; })
+			nodes.exit().remove()
+
+			nodes
+				.enter()
+				.append("circle")				
+				.attr("r", 1)
+				.call(drag)
+			nodes
+				.transition()				
+				.attr("r", function(d) { return getNodeSize(d) - (appearsInMultipleDocs(d) ? 1 : 0) }) // Multidoc nodes are a tiny bit smaller so that the outline looks normal
+
+			nodes 
+				.attr("class", function(d) { return "node col-" + d.colour_indexes[CURRENT_NODE_COLOURS] } )
+				.classed('multi-doc', function(d) { return appearsInMultipleDocs(d) })
+
+		
+
+			nodeLabels = nodeLabels.data(graphNodes, function(d) { return d.id; })
+			nodeLabels.exit().remove()
+
+			nodeLabels
+				.enter()
+				.append("text")
+				.attr("class", "node-text")
+				.attr("text-anchor", "middle")
+				.style("font-size", 12 / scaleValue **TEXT_SCALE)
+				.text( function (d) { return d.label; })
+
+
+
+			// multiDocNodeSegments = multiDocNodes.selectAll("path")
+			// 	//.data(graphNodes, function(d) { return d.id; })
+			// 	.data((d, i) => d3.range(function(d) { console.log(d); return d.doc_appearances})
+			// 	 .map(j => [i, j]))
+				
+		
+
+			//var graphNodes = this.graph.nodes//.filter(function(n) { return n.docIdx < numDocuments; })
+    		//var graphEdges = this.graph.edges//.filter(function(n) { return n.docIdx < numDocuments; })
+
+			//force
+			//	.nodes(graphNodes)
+			//	.links(graphEdges)
+				
+
+			force.start()
+			updateLegendList() // Update the items in the legend list every time the graph is redrawn
+			
+
+			if(done)
+				done()
+			  
+		}
+		
+		// Remove the content from the graph svg and delete the current graph object.
+   		function clearGraph() {
+	   		svg.html("");
+	   		container = svg.append("g").attr("class", "g-container");
+	   		container.append("g").attr("class", "g-links");
+			container.append("g").attr("class", "g-nodes");
+			graphReady = false;
+
+	   	}
+
+
+		function initGraph(triples) {
+			clearGraph();
+			graph = triplesToGraph(triples)			
+	    	force
+	    		.nodes(graph.nodes)
+	    		.links(graph.edges)
+	    	updateGraph(function(){})
+		}
+		
+
+   	</script>
+
+	<script>
+
+		
+
+		$documentsFormTextarea = $("#documents-form-textarea")
+		$textareaInfo = $("#textarea-info")
+		$graphCanvas = $("#graph-canvas")
+		$overlayInit = $("#overlay-init")
+   		$overlayLoading = $("#overlay-loading")
+   		$overlayNoTriples = $("#overlay-no-triples")
+   		$overlayDocsTooLong = $("#overlay-docs-too-long")
+   		$overlayControlsAndLegend = $("#overlay-controls-and-legend");
+
+   		$nodeWeights = $("#input-node-weights")
+   		$relationType = $("#input-relation-type")
+   		$nodeColours = $("#input-node-colours")
+
+   		$legendList = $("#legend-list")
+   		$legendButton = $("#open-legend")
+
+   		$graphControls = $("#graph-controls")
+   		$graphSlider = $("#graph-slider")
+   		$numDocs = $("#numDocs")
+   		$totalDocs = $("#totalDocs")
+
+	   	// Hide the graph and show the loading overlay.
+	   	function hideGraph() {
+			$overlayInit.hide()
+   			$overlayLoading.show()
+   			$graphCanvas.hide()
+   			$overlayDocsTooLong.hide()
+   			$overlayNoTriples.hide();
+   			$overlayControlsAndLegend.hide();
+   			$graphControls.addClass('disabled')
+	   	}
+
+	   	function showNoTriplesMessage() {
+	   		$overlayInit.hide()
+	   		$overlayLoading.hide()
+	   		$graphCanvas.hide()
+	   		$overlayDocsTooLong.hide()
+	   		$overlayNoTriples.show();
+	   		$overlayControlsAndLegend.hide();
+	   		$graphControls.addClass('disabled')
+	   	}
+	   	function showDocsTooLongMessage() {
+	   		$overlayInit.hide()
+	   		$overlayLoading.hide()
+	   		$graphCanvas.hide()
+	   		$overlayDocsTooLong.show()
+	   		$overlayNoTriples.hide();
+	   		$overlayControlsAndLegend.hide();
+	   		$graphControls.addClass('disabled')
+	   	}
+
+	   	// Hide the loading overlay and show the graph.
+	   	function showGraph() {
+			$overlayInit.hide()
+	   		$overlayLoading.hide()
+	   		$overlayNoTriples.hide();
+	   		$overlayDocsTooLong.hide()
+	   		$overlayControlsAndLegend.show();
+	   		if(!$legendButton.is(":checked"))
+	   			$legendButton.click()
+	   		$graphCanvas.fadeIn(250)
+	   		$graphControls.removeClass('disabled')
+			graphReady = true;
+	   	}
+
+	   	function updateSlider(numDocs) {
+	   		$numDocs.html(numDocs)
+	   		$totalDocs.html(numDocs)
+	   		$graphSlider.attr({
+	   			"min": 1,
+	   			"max": numDocs
+	   		});
+	   		$graphSlider.val(numDocs)
+	   		$graphSlider.removeClass("disabled");
+	   		if(numDocs == 1) {
+	   			$graphSlider.addClass("disabled");
+	   		}
+	   	}
+
+	   	function moveSlider() {
+	   		CURRENT_NUM_DOCS = parseInt($(this).val())
+	   		$numDocs.html(CURRENT_NUM_DOCS)
+	   		updateGraph()
+
+	   	}
+
+	   	function updateNodeWeights() {
+	   		var idx = $nodeWeights.prop('selectedIndex')
+	   		CURRENT_WEIGHT_IDX = idx
+	   		updateGraph()
+	   	}
+	
+	   	function updateRelationType() {
+	   		var idx = $relationType.prop('selectedIndex')
+	   		CURRENT_REL_IDX = idx
+	   		updateGraph()
+	   	}
+
+	   	function updateNodeColours() {
+	   		var idx = $nodeColours.prop('selectedIndex')
+	   		CURRENT_NODE_COLOURS = idx
+	   		updateGraph()
+	   	}
+
+	   	function updateTextareaInfo() {
+	   		var data = $documentsFormTextarea.val()
+	   		var d = getCleanDocumentsFromString(data)
+			var cleanDocuments = d.cleanDocuments
+			var numWords = d.numWords
+	   		$textareaInfo.html("" + cleanDocuments.length + " document" + (numWords > 1 ? "s" : "") + " / " + numWords + " words entered")
+	   	}
+
+	   	function updateLegendList() {
+
+	   		$legendList.html();
+	   		legendHtml = "";
+	   		if(CURRENT_NODE_COLOURS == 0) { // document-level colouring
+		   		for( var i = 0; i < CURRENT_NUM_DOCS; i++) {
+		   			legendHtml += '<li><span class="legend-item col-' + ((i % 10) + 1) + '"></span>Document #' + (i + 1) + '</li>'
+		   		}
+	   		} else if (CURRENT_NODE_COLOURS == 1) {
+				for( var i in ENTITY_INDEXES) {
+					if(CURRENT_ENTITIES_IN_DOCS.has(i)) {
+		   				legendHtml += '<li><span class="legend-item col-' + (ENTITY_INDEXES[i] + 1) + '"></span>' + ENTITY_NAMES[i] + '</li>'
+					}
+		   		}
+				
+
+			} else if (CURRENT_NODE_COLOURS == 2) {
+	   			legendHtml = '<li><span class="legend-item col-1"></span>Phrase</li>'
+	   		}
+	   		$legendList.html(legendHtml);
+
+	   	}
+
+	   	function getCleanDocumentsFromString(data) {
+			var documents = data.split("\n");
+   			var cleanDocuments = [];
+			var numWords = 0
+   			for(var i = 0; i < documents.length; i++) {
+   				doc = documents[i].trim();
+   				if(doc.length > 0) {
+   					cleanDocuments.push(doc);
+   				}
+				numWords += doc.split(/\s+/).length;
+   			}
+   			return { cleanDocuments: cleanDocuments, numWords: numWords }
+	   	}
+
+		function renderGraph(triples) {
+			if(triples.length == 0) {
+				showNoTriplesMessage();
+				return
+			}				
+			CURRENT_NUM_DOCS = triples[triples.length-1][0] + 1 || 0;
+			initGraph(triples)
+			setTimeout(function() {
+				updateSlider(CURRENT_NUM_DOCS)
+				showGraph()
+			}, 500);
+		}
+
+
+   		// Submit the document to the back-end, which is then transformed into triples and sent back to the front-end.
+   		function submitDocuments(e) {
+   			e.preventDefault()
+			hideGraph()
+   			clearGraph();   
+
+   			var data = $documentsFormTextarea.val()
+   			
+   			var d = getCleanDocumentsFromString(data)
+			cleanDocuments = d.cleanDocuments
+			numWords = d.numWords
+
+			if(numWords > 10000 || cleanDocuments.length > 10) {
+   				showDocsTooLongMessage();
+   				return
+   			}
+   			
+
+
+   			$.ajax({
+   				url: "text2kg/get_triples",
+   				method: "POST",
+   				contentType: "application/json; charset=UTF-8",
+   				data: JSON.stringify({'documents': cleanDocuments}, null, '\t'),
+   				
+   				success: function(triples) {   	
+   					renderGraph(triples)
+   				},
+   				error: function() {
+   					alert("Graph failed to generate. Please ensure the triples_server is also running (see README.md for more details).")
+   				}
+
+
+   			})   			
+   		
+   			
+   		}
+
+
+
+
+
+   		$("#submit-document-button").on('click', submitDocuments)
+
+   		$documentsFormTextarea.on('input propertychange', updateTextareaInfo)
+   		$graphSlider.on('change', moveSlider)
+   		$nodeWeights.on('change', updateNodeWeights)
+   		$relationType.on('change', updateRelationType)
+   		$nodeColours.on('change', updateNodeColours)
+   		//var graph = new Graph(svg, triples)
+
+   
+		$documentsFormTextarea.val(initial_documents.join("\n\n"))
+		updateTextareaInfo()
+
+		
+
+
+		$(document).ready(function() { 
+			hideGraph()
+   			clearGraph(); 
+			renderGraph(initial_triples) });
+
+		//reloadGraph()
+
+		// setTimeout(function(){
+		// 	console.log('nootnoot')
+		// 	updateGraph(numDocuments=2, function(){})
+		// }, 10000)
+
+	</script>
+
+
+</html>
