@@ -32,7 +32,7 @@ Please ensure you are using Python 3.6 and have the `virtualenv` package install
 
 ## Visualisation web app
 
-Our Flask application that provides an easy-to-use interface for knowledge graph construction from text. Users may enter documents into a text box, click on the "Create graph" button, and their documents will be sent to our Candidate Extraction model for processing. An interactive graph will then be quickly be drawn to the screen.
+Our Flask application provides an easy-to-use interface for knowledge graph construction from text. Users may enter documents into a text box, click on the "Create graph" button, and their documents will be sent to our Candidate Extraction model for processing. An interactive graph will then be quickly be drawn to the screen.
 
 If you wish to run the server locally, you must run the Visualisation server via:
 
