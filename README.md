@@ -1,6 +1,6 @@
 # Text2KG
 
-UWA's submission to the ICDM2019 ICDM/ICBK Knowledge Graph Contest.
+UWA's graph visualisation app that was submitted as part of the ICDM 2019 ICDM/ICBK Knowledge Graph Contest.
 
 Team members:
 
