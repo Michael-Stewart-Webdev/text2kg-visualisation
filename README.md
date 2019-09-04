@@ -16,8 +16,7 @@ Team members:
         visualisation           // Visualisation web app
         requirements.txt        // All Python requirements for the /sourcecode directory
         setup.sh                // Creates a virtual environment and installs required packages
-        run.sh                  // Runs the triple generation code
-        
+       
 
 ## Running the code
 
