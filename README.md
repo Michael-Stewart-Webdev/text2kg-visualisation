@@ -23,13 +23,11 @@ Team members:
 
 This repository contains the sourcecode for the visualisation app, but our triple generation code is not publically available. In order to run the visualisation app, you must first place a triple generation model into `sourcecode/candidate extraction/triples_from_text.py`. This file requires a function named `extract_triples`, which returns a list of triples given a document. For example, if given the document `"Barrack Obama went to the Whitehouse with Michelle"`, the function must take that string as input and return a list of triples, e.g. `[["Barrack", "went to", "the Whitehouse"], ["Barrack Obama", "with", "Michelle"]... ]`.
 
-The sourcecode, available under the `/sourcecode` directory, may be run via the following commands:
+Once the triple generation model is in place, you may install all required packages via:
 
     cd sourcecode
     chmod u+x setup.sh
-    chmod u+x run.sh
     ./setup.sh
-    ./run.sh
 
 Please ensure you are using Python 3.6 and have the `virtualenv` package installed in order to maximise compatibility. Running the shell scripts will likely require a Unix-based OS such as Ubuntu.
 
