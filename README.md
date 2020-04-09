@@ -1,6 +1,6 @@
 # Text2KG
 
-UWA's graph visualisation app that was submitted and won first prize at the 2019 ICDM/ICBK Knowledge Graph Contest.
+UWA's graph visualisation app that won first prize at the 2019 ICDM/ICBK Knowledge Graph Contest.
 
 Team members:
 
